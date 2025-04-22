@@ -33,10 +33,9 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "CameraX-MLKit"
         private const val REQUEST_CODE_PERMISSIONS = 10
-        private val REQUIRED_PERMISSIONS =
-            mutableListOf(
-                Manifest.permission.CAMERA
-            ).toTypedArray()
+        private val REQUIRED_PERMISSIONS = mutableListOf(
+            Manifest.permission.CAMERA
+        ).toTypedArray()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -64,14 +63,12 @@ class MainActivity : AppCompatActivity() {
             .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
             .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
             .setContourMode(FaceDetectorOptions.CONTOUR_MODE_ALL)
-            .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
-            .build()
+            .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL).build()
 
         faceDetector = FaceDetection.getClient(options)
 
         cameraController.setImageAnalysisAnalyzer(
-            ContextCompat.getMainExecutor(this),
-            MlKitAnalyzer(
+            ContextCompat.getMainExecutor(this), MlKitAnalyzer(
                 listOf(faceDetector),
                 COORDINATE_SYSTEM_VIEW_REFERENCED,
                 ContextCompat.getMainExecutor(this)
@@ -92,8 +89,7 @@ class MainActivity : AppCompatActivity() {
                 previewView.setOnTouchListener(faceViewModel.faceTouchCallback)
                 previewView.overlay.clear()
                 previewView.overlay.add(faceDrawable)
-            }
-        )
+            })
 
         cameraController.bindToLifecycle(this)
         previewView.controller = cameraController
@@ -112,8 +108,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onRequestPermissionsResult(
         requestCode: Int, permissions: Array<String>,
-        grantResults:
-        IntArray,
+        grantResults: IntArray,
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQUEST_CODE_PERMISSIONS) {
@@ -121,9 +116,7 @@ class MainActivity : AppCompatActivity() {
                 startCamera()
             } else {
                 Toast.makeText(
-                    this,
-                    "Permissions not granted by the user.",
-                    Toast.LENGTH_SHORT
+                    this, "Permissions not granted by the user.", Toast.LENGTH_SHORT
                 ).show()
                 finish()
             }
