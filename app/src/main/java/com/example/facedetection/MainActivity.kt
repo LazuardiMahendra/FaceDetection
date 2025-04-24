@@ -5,7 +5,6 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
-import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.CameraSelector
 import androidx.camera.mlkit.vision.MlKitAnalyzer
@@ -14,14 +13,12 @@ import androidx.camera.view.LifecycleCameraController
 import androidx.camera.view.PreviewView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
 import com.example.facedetection.databinding.ActivityMainBinding
-import com.google.mlkit.common.MlKit
+import com.google.mlkit.vision.face.Face
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetector
 import com.google.mlkit.vision.face.FaceDetectorOptions
-import java.util.concurrent.Executor
+import com.google.mlkit.vision.face.FaceLandmark
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -31,7 +28,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var faceDetector: FaceDetector
 
     companion object {
-        private const val TAG = "CameraX-MLKit"
         private const val REQUEST_CODE_PERMISSIONS = 10
         private val REQUIRED_PERMISSIONS = mutableListOf(
             Manifest.permission.CAMERA
@@ -44,7 +40,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         if (allPermissionsGranted()) {
-            Log.d("PERMISSION", "PREMISSION GRANTED")
+            Log.d("PERMISSION", "PERMISSION GRANTED")
             startCamera()
         } else {
             ActivityCompat.requestPermissions(this, REQUIRED_PERMISSIONS, REQUEST_CODE_PERMISSIONS)
@@ -77,11 +73,12 @@ class MainActivity : AppCompatActivity() {
 
                 if (faces.isNullOrEmpty()) {
                     previewView.overlay.clear()
-                    binding.statusText.text = "No face detected ❌"
+                    "No face detected ❌".also { binding.statusText.text = it }
                     return@MlKitAnalyzer
                 }
 
-                binding.statusText.text = "Face detected ✅"
+                val result = processFaceList(faces)
+                binding.statusText.text = result.joinToString("\n\n")
 
                 val faceViewModel = FaceViewModel(faces[0])
                 val faceDrawable = FaceDrawable(faceViewModel)
@@ -93,6 +90,56 @@ class MainActivity : AppCompatActivity() {
 
         cameraController.bindToLifecycle(this)
         previewView.controller = cameraController
+    }
+
+    private fun processFaceList(faces: List<Face>): List<String> {
+        val results = mutableListOf<String>()
+        for ((i, face) in faces.withIndex()) {
+            val id = face.trackingId ?: -1
+
+            val rotX = face.headEulerAngleX
+            val rotY = face.headEulerAngleY
+            val rotZ = face.headEulerAngleZ
+
+            val smileProb = face.smilingProbability ?: 0F
+
+            val leftEyeProb = face.leftEyeOpenProbability ?: 0F
+            val rightEyeProb = face.rightEyeOpenProbability ?: 0F
+
+            val smileApprove = smileProb > 0.7
+            val eyesOpen = (leftEyeProb > 0.7 && rightEyeProb > 0.7)
+            val facingApprove = (rotX in -10f..10f && rotY in -15f..15f && rotZ in -10f..10f)
+            val hasContours = face.allContours.isNotEmpty()
+            val hasLandmarks = listOf(
+                FaceLandmark.LEFT_EAR, FaceLandmark.RIGHT_EAR, FaceLandmark
+                    .RIGHT_EYE, FaceLandmark.LEFT_EYE, FaceLandmark.NOSE_BASE, FaceLandmark
+                    .MOUTH_BOTTOM, FaceLandmark.MOUTH_LEFT, FaceLandmark.MOUTH_RIGHT
+            ).all { face.getLandmark(it) != null }
+
+            val isFaceValid = smileApprove && eyesOpen && facingApprove && hasContours &&
+                    hasLandmarks
+
+            val result = buildString {
+                append("- Face #$1 (ID : $id) :\n")
+                append("- Smile: %.2f %s\n".format(smileProb, if (smileApprove) "✅" else "❌"))
+                append(
+                    "- Eyes Left Open: %.2f || Eyes Right Open: %.2f =  %s\n".format
+                        (leftEyeProb, rightEyeProb, if (eyesOpen) "✅" else "❌")
+                )
+                append(
+                    "- Pose Straight Ahead: Y: %.1f || Z: %.1f = %s\n".format(
+                        rotY,
+                        rotZ,
+                        if (facingApprove) "✅" else "❌"
+                    )
+                )
+                append("- Landmarks: ${if (hasLandmarks) "✅" else "❌"}\n")
+                append("- Contours: ${if (hasContours) "✅" else "❌"}\n")
+                append("→ VALID FACE: ${if (isFaceValid) "YES ✅" else "NO ❌"}")
+            }
+            results.add(result)
+        }
+        return results
     }
 
     private fun allPermissionsGranted() = REQUIRED_PERMISSIONS.all {
@@ -107,7 +154,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onRequestPermissionsResult(
-        requestCode: Int, permissions: Array<String>,
+        requestCode: Int,
+        permissions: Array<String>,
         grantResults: IntArray,
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)

@@ -10,7 +10,7 @@ import android.graphics.drawable.Drawable
 class FaceDrawable(private val viewModel: FaceViewModel) : Drawable() {
 
     private val paint = Paint().apply {
-        style = Paint.Style.FILL_AND_STROKE
+        style = Paint.Style.STROKE
         color = Color.RED
         strokeWidth = 10f
         alpha = 200
