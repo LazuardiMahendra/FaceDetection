@@ -27,6 +27,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var cameraExecutor: ExecutorService
     private lateinit var faceDetector: FaceDetector
 
+    private var currentPhase = 1
+    private var phaseStartTime: Long = 0L
+    private var currentChallenge: Pair<String, Boolean>? = null
+    private var challengePassed = false
+
     companion object {
         private const val REQUEST_CODE_PERMISSIONS = 10
         private val REQUIRED_PERMISSIONS = mutableListOf(
@@ -72,74 +77,139 @@ class MainActivity : AppCompatActivity() {
                 val faces = result?.getValue(faceDetector)
 
                 if (faces.isNullOrEmpty()) {
-                    previewView.overlay.clear()
-                    "No face detected ❌".also { binding.statusText.text = it }
+                    resetPhases()
+                    binding.statusText.text = "No face detected ❌"
                     return@MlKitAnalyzer
                 }
 
-                val result = processFaceList(faces)
-                binding.statusText.text = result.joinToString("\n\n")
+                val face = faces[0]
+                when (currentPhase) {
+                    1 -> requiredVerification(face)
+                    2 -> challengeVerification(face)
+                }
 
-                val faceViewModel = FaceViewModel(faces[0])
-                val faceDrawable = FaceDrawable(faceViewModel)
+                // Additional drawing or logic
+                try {
+                    val faceViewModel = FaceViewModel(face)
+                    val faceDrawable = FaceDrawable(faceViewModel)
 
-                previewView.setOnTouchListener(faceViewModel.faceTouchCallback)
-                previewView.overlay.clear()
-                previewView.overlay.add(faceDrawable)
+                    binding.viewFinder.setOnTouchListener(faceViewModel.faceTouchCallback)
+                    binding.viewFinder.overlay.clear()
+                    binding.viewFinder.overlay.add(faceDrawable)
+                } catch (e: Exception) {
+                    Log.e("Camera", "Face overlay error: ${e.message}")
+                }
             })
 
         cameraController.bindToLifecycle(this)
         previewView.controller = cameraController
     }
 
-    private fun processFaceList(faces: List<Face>): List<String> {
-        val results = mutableListOf<String>()
-        for ((i, face) in faces.withIndex()) {
-            val id = face.trackingId ?: -1
+    private fun requiredVerification(face: Face) {
+        val rotX = face.headEulerAngleX
+        val rotY = face.headEulerAngleY
+        val rotZ = face.headEulerAngleZ
 
-            val rotX = face.headEulerAngleX
-            val rotY = face.headEulerAngleY
-            val rotZ = face.headEulerAngleZ
+        val facingApprove = (rotX in -10f..10f && rotY in -15f..15f && rotZ in -10f..10f)
+        val hasContours = face.allContours.isNotEmpty()
+        val hasLandmarks = listOf(
+            FaceLandmark.LEFT_EAR,
+            FaceLandmark.RIGHT_EAR,
+            FaceLandmark.RIGHT_EYE,
+            FaceLandmark.LEFT_EYE,
+            FaceLandmark.NOSE_BASE,
+            FaceLandmark.MOUTH_BOTTOM,
+            FaceLandmark.MOUTH_LEFT,
+            FaceLandmark.MOUTH_RIGHT
+        ).all { face.getLandmark(it) != null }
 
-            val smileProb = face.smilingProbability ?: 0F
+        val isValid = facingApprove && hasContours && hasLandmarks
 
-            val leftEyeProb = face.leftEyeOpenProbability ?: 0F
-            val rightEyeProb = face.rightEyeOpenProbability ?: 0F
+        if (isValid) {
+            if (phaseStartTime == 0L) phaseStartTime = System.currentTimeMillis()
 
-            val smileApprove = smileProb > 0.7
-            val eyesOpen = (leftEyeProb > 0.7 && rightEyeProb > 0.7)
-            val facingApprove = (rotX in -10f..10f && rotY in -15f..15f && rotZ in -10f..10f)
-            val hasContours = face.allContours.isNotEmpty()
-            val hasLandmarks = listOf(
-                FaceLandmark.LEFT_EAR, FaceLandmark.RIGHT_EAR, FaceLandmark
-                    .RIGHT_EYE, FaceLandmark.LEFT_EYE, FaceLandmark.NOSE_BASE, FaceLandmark
-                    .MOUTH_BOTTOM, FaceLandmark.MOUTH_LEFT, FaceLandmark.MOUTH_RIGHT
-            ).all { face.getLandmark(it) != null }
+            val elapsed = System.currentTimeMillis() - phaseStartTime
+            binding.statusText.text =
+                "Hold position.... ${(5000 - elapsed).coerceAtLeast(0) / 1000}s"
 
-            val isFaceValid = smileApprove && eyesOpen && facingApprove && hasContours &&
-                    hasLandmarks
-
-            val result = buildString {
-                append("- Face #$1 (ID : $id) :\n")
-                append("- Smile: %.2f %s\n".format(smileProb, if (smileApprove) "✅" else "❌"))
-                append(
-                    "- Eyes Left Open: %.2f || Eyes Right Open: %.2f =  %s\n".format
-                        (leftEyeProb, rightEyeProb, if (eyesOpen) "✅" else "❌")
-                )
-                append(
-                    "- Pose Straight Ahead: Y: %.1f || Z: %.1f = %s\n".format(
-                        rotY,
-                        rotZ,
-                        if (facingApprove) "✅" else "❌"
-                    )
-                )
-                append("- Landmarks: ${if (hasLandmarks) "✅" else "❌"}\n")
-                append("- Contours: ${if (hasContours) "✅" else "❌"}\n")
-                append("→ VALID FACE: ${if (isFaceValid) "YES ✅" else "NO ❌"}")
+            if (elapsed >= 5000) {
+                currentPhase = 2
+                phaseStartTime = 0L
+                currentChallenge = generateChallenge(face)
+                challengePassed = false
             }
-            results.add(result)
+        } else {
+            resetPhases()
+            binding.statusText.text = "Wajah tidak valid ❌"
         }
-        return results
+    }
+
+    private fun challengeVerification(face: Face) {
+        val (challengeName, expectedResult) = currentChallenge ?: return
+        val currentResult = evaluateChallenge(face, challengeName)
+
+        if (currentResult == expectedResult) {
+            challengePassed = true
+
+            if (phaseStartTime == 0L) phaseStartTime = System.currentTimeMillis()
+
+            val elapsed = System.currentTimeMillis() - phaseStartTime
+            binding.statusText.text =
+                "Challenge \"$challengeName\" → ${(3000 - elapsed).coerceAtLeast(0) / 1000}s"
+
+            if (elapsed >= 3000) {
+                binding.statusText.text = "Verifikasi BERHASIL ✅"
+
+                // Jeda 7 detik sebelum lanjutkan proses berikutnya
+                binding.statusText.postDelayed({
+                    resetPhases()
+                    binding.statusText.text = ""
+                }, 7000) // Delay 7 detik
+            }
+        } else {
+            challengePassed = false
+
+            // Langsung ulangi challenge jika gagal
+            binding.statusText.text = "Challenge gagal. Coba lagi ❌"
+            currentChallenge = generateChallenge(face)
+            phaseStartTime = 0L
+        }
+    }
+
+    private fun evaluateChallenge(face: Face, challenge: String): Boolean {
+        val smileProb = face.smilingProbability ?: 0F
+        val eyeLeftProb = face.leftEyeOpenProbability ?: 0F
+        val eyeRightProb = face.rightEyeOpenProbability ?: 0F
+
+        return when (challenge) {
+            "smile" -> smileProb > 0.7 // Smile condition
+            "leftEyeClosed" -> eyeLeftProb < 0.3 // Left eye closed condition
+            "rightEyeClosed" -> eyeRightProb < 0.3 // Right eye closed condition
+            "blinkEye" -> eyeLeftProb < 0.3 && eyeRightProb < 0.3 // Blink condition (both eyes closed)
+            else -> false
+        }
+    }
+
+    private fun generateChallenge(face: Face): Pair<String, Boolean> {
+        val smileProb = face.smilingProbability ?: 0F
+        val eyeLeftProb = face.leftEyeOpenProbability ?: 0F
+        val eyeRightProb = face.rightEyeOpenProbability ?: 0F
+
+        val challengeConditions = mapOf(
+            "smile" to (smileProb > 0.7),
+            "leftEyeClosed" to (eyeLeftProb < 0.3),
+            "rightEyeClosed" to (eyeRightProb < 0.3),
+            "blinkEye" to (eyeLeftProb < 0.3 && eyeRightProb < 0.3)
+        )
+
+        return challengeConditions.entries.random().toPair()
+    }
+
+    private fun resetPhases() {
+        currentPhase = 1
+        phaseStartTime = 0L
+        currentChallenge = null
+        challengePassed = false
     }
 
     private fun allPermissionsGranted() = REQUIRED_PERMISSIONS.all {
