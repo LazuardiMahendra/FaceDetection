@@ -94,7 +94,6 @@ class MainActivity : AppCompatActivity() {
                     2 -> challengeVerification(face)
                 }
 
-
                 val faceViewModel = FaceViewModel(face)
                 val faceDrawable = FaceDrawable(faceViewModel)
 
@@ -127,53 +126,63 @@ class MainActivity : AppCompatActivity() {
 
         val isValid = facingApprove && hasContours && hasLandmarks
 
-        if (isValid) {
-            if ((face.smilingProbability ?: 0F) > 0.7) isSmile = true
-            if ((face.leftEyeOpenProbability ?: 0F) < 0.2) isLeftEyeClosed = true
-            if ((face.rightEyeOpenProbability ?: 0F) < 0.2) isRightEyeClosed = true
+        if (phaseStartTime == 0L) phaseStartTime = System.currentTimeMillis()
+        val elapsed = System.currentTimeMillis() - phaseStartTime
+        binding.statusText.text = "Hold position.... ${(1000 - elapsed).coerceAtLeast(0) / 1000}s"
 
-            if (phaseStartTime == 0L) phaseStartTime = System.currentTimeMillis()
+        if (elapsed >= 1000) {
+            if (isValid) {
+                if ((face.smilingProbability ?: 0F) > 0.7) isSmile = true
+                if ((face.leftEyeOpenProbability ?: 0F) < 0.2) isLeftEyeClosed = true
+                if ((face.rightEyeOpenProbability ?: 0F) < 0.2) isRightEyeClosed = true
 
-            val elapsed = System.currentTimeMillis() - phaseStartTime
-            binding.statusText.text =
-                "Hold position.... ${(3000 - elapsed).coerceAtLeast(0) / 1000}s"
-
-            if (elapsed >= 3000) {
                 currentPhase = 2
                 phaseStartTime = 0L
                 challengePassed = false
                 currentChallenge = generateChallenges()
-            }
-        } else {
-            resetPhases()
-            binding.statusText.text = "Invalid face ❌"
-            Log.d("CHALLENGE", "Challenge List: $challengeList")
 
+            } else {
+                resetPhases()
+                binding.statusText.text = "Invalid face ❌"
+                Log.d("CHALLENGE", "Challenge List: $challengeList")
+
+            }
         }
     }
 
     private fun challengeVerification(face: Face) {
+        val rotX = face.headEulerAngleX
+        val rotY = face.headEulerAngleY
+        val rotZ = face.headEulerAngleZ
+
+        val facingApprove = (rotX in -10f..10f && rotY in -15f..15f && rotZ in -10f..10f)
+        val hasContours = face.allContours.isNotEmpty()
+        val hasLandmarks = listOf(
+            FaceLandmark.LEFT_EAR,
+            FaceLandmark.RIGHT_EAR,
+            FaceLandmark.RIGHT_EYE,
+            FaceLandmark.LEFT_EYE,
+            FaceLandmark.NOSE_BASE,
+            FaceLandmark.MOUTH_BOTTOM,
+            FaceLandmark.MOUTH_LEFT,
+            FaceLandmark.MOUTH_RIGHT
+        ).all { face.getLandmark(it) != null }
+
+        val isValid = facingApprove && hasContours && hasLandmarks
+        if (!isValid) resetPhases()
+
         binding.statusText.text = "Challenge $currentChallenge"
         checkingChallengeVerification(face)
         if (challengePassed) {
-            Log.d("CHALLENGE", "Challenge : $currentChallenge")
-            Log.d("CHALLENGE", "Challenge List: $challengeList")
-            if (phaseStartTime == 0L) phaseStartTime = System.currentTimeMillis()
-            val elapsed = System.currentTimeMillis() - phaseStartTime
-            if (elapsed >= 2000) {
-                binding.statusText.text = "Verifikasi BERHASIL ✅"
-
-            }
+            binding.statusText.text = "Verifikasi BERHASIL ✅"
         }
-
     }
-
 
     private fun generateChallenges(): String {
         if (!isSmile) challengeList.add("smile")
-        if (!isLeftEyeClosed) challengeList.add("leftEyeClose")
-        if (!isRightEyeClosed) challengeList.add("rightEyeClose")
-        if (!isRightEyeClosed && isLeftEyeClosed) challengeList.add("blink")
+        if (!isLeftEyeClosed) challengeList.add("closed left eye")
+        if (!isRightEyeClosed) challengeList.add("closed right eye")
+        if (!isRightEyeClosed && !isLeftEyeClosed) challengeList.add("blink")
 
         return challengeList.random()
     }
@@ -186,14 +195,18 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            "leftEyeClose" -> {
-                if ((face.leftEyeOpenProbability ?: 0F) < 0.2) {
+            "closed left eye" -> {
+                if ((face.leftEyeOpenProbability ?: 0F) < 0.5 && (face.rightEyeOpenProbability
+                        ?: 0F) > 0.4
+                ) {
                     challengePassed = true
                 }
             }
 
-            "rightEyeClose" -> {
-                if ((face.rightEyeOpenProbability ?: 0F) < 0.2) {
+            "closed right eye" -> {
+                if ((face.leftEyeOpenProbability ?: 0F) > 0.5 && (face.rightEyeOpenProbability
+                        ?: 0F) < 0.4
+                ) {
                     challengePassed = true
                 }
             }
@@ -205,6 +218,10 @@ class MainActivity : AppCompatActivity() {
                     challengePassed = true
                 }
             }
+
+            else -> {
+                resetPhases()
+            }
         }
     }
 
@@ -213,6 +230,9 @@ class MainActivity : AppCompatActivity() {
         phaseStartTime = 0L
         currentChallenge = ""
         challengePassed = false
+        isSmile = false
+        isLeftEyeClosed = false
+        isRightEyeClosed = false
         challengeList.clear()
 
     }
