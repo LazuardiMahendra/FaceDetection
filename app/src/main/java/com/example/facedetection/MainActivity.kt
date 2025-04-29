@@ -1,8 +1,11 @@
 package com.example.facedetection
 
 import android.Manifest
+import android.content.ContentValues
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
+import android.provider.MediaStore
 import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -19,6 +22,8 @@ import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetector
 import com.google.mlkit.vision.face.FaceDetectorOptions
 import com.google.mlkit.vision.face.FaceLandmark
+import java.io.File
+import java.io.FileInputStream
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -37,6 +42,9 @@ class MainActivity : AppCompatActivity() {
 
     private val challengeList: MutableList<String> = mutableListOf()
     private var currentChallenge = ""
+
+    private var imageUri: Uri? = null
+
 
     companion object {
         private const val REQUEST_CODE_PERMISSIONS = 10
@@ -196,15 +204,15 @@ class MainActivity : AppCompatActivity() {
             }
 
             "closed left eye" -> {
-                if ((face.leftEyeOpenProbability ?: 0F) < 0.5 && (face.rightEyeOpenProbability
-                        ?: 0F) > 0.4
+                if ((face.leftEyeOpenProbability ?: 0F) > 0.2 && (face.rightEyeOpenProbability
+                        ?: 0F) < 0.4
                 ) {
                     challengePassed = true
                 }
             }
 
             "closed right eye" -> {
-                if ((face.leftEyeOpenProbability ?: 0F) > 0.5 && (face.rightEyeOpenProbability
+                if ((face.rightEyeOpenProbability ?: 0F) > 0.2 && (face.leftEyeOpenProbability
                         ?: 0F) < 0.4
                 ) {
                     challengePassed = true
@@ -235,6 +243,37 @@ class MainActivity : AppCompatActivity() {
         isRightEyeClosed = false
         challengeList.clear()
 
+    }
+
+    private fun saveToGallery(photoPath: String?) {
+        if (photoPath == null) return
+
+        val file = File(photoPath)
+        if (!file.exists()) {
+            Log.e("ERROR", "File not found in path: $photoPath")
+            return
+        }
+
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, file.name)
+            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/GlobalExtreme")
+        }
+        val uri =
+            contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+
+        uri?.let {
+            try {
+                contentResolver.openOutputStream(it)?.use { outputStream ->
+                    FileInputStream(file).use { inputStream ->
+                        inputStream.copyTo(outputStream)
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                Log.d("RESULT", "Failed load image to gallery $e")
+            }
+        }
     }
 
     private fun allPermissionsGranted() = REQUIRED_PERMISSIONS.all {
