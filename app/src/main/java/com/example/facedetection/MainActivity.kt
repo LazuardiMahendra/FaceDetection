@@ -4,18 +4,29 @@ import android.Manifest
 import android.content.ContentValues
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
 import android.util.Log
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCapture.OnImageSavedCallback
+import androidx.camera.core.ImageCaptureException
+import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.mlkit.vision.MlKitAnalyzer
+import androidx.camera.view.CameraController
 import androidx.camera.view.CameraController.COORDINATE_SYSTEM_VIEW_REFERENCED
 import androidx.camera.view.LifecycleCameraController
 import androidx.camera.view.PreviewView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import com.example.facedetection.databinding.ActivityMainBinding
 import com.google.mlkit.vision.face.Face
 import com.google.mlkit.vision.face.FaceDetection
@@ -24,6 +35,10 @@ import com.google.mlkit.vision.face.FaceDetectorOptions
 import com.google.mlkit.vision.face.FaceLandmark
 import java.io.File
 import java.io.FileInputStream
+import java.io.IOException
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -43,8 +58,9 @@ class MainActivity : AppCompatActivity() {
     private val challengeList: MutableList<String> = mutableListOf()
     private var currentChallenge = ""
 
+    private lateinit var imageCapture: ImageCapture
     private var imageUri: Uri? = null
-
+    private var currentPhotoPath: String? = null
 
     companion object {
         private const val REQUEST_CODE_PERMISSIONS = 10
@@ -73,6 +89,8 @@ class MainActivity : AppCompatActivity() {
         val previewView: PreviewView = binding.viewFinder
 
         cameraController.cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
+        cameraController.bindToLifecycle(this)
+        previewView.controller = cameraController
 
         val options = FaceDetectorOptions.Builder()
             .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
@@ -109,9 +127,6 @@ class MainActivity : AppCompatActivity() {
                 binding.viewFinder.overlay.clear()
                 binding.viewFinder.overlay.add(faceDrawable)
             })
-
-        cameraController.bindToLifecycle(this)
-        previewView.controller = cameraController
     }
 
     private fun requiredVerification(face: Face) {
@@ -148,12 +163,12 @@ class MainActivity : AppCompatActivity() {
                 phaseStartTime = 0L
                 challengePassed = false
                 currentChallenge = generateChallenges()
+//                capturePhoto()
 
             } else {
                 resetPhases()
                 binding.statusText.text = "Invalid face ❌"
                 Log.d("CHALLENGE", "Challenge List: $challengeList")
-
             }
         }
     }
@@ -183,6 +198,12 @@ class MainActivity : AppCompatActivity() {
         checkingChallengeVerification(face)
         if (challengePassed) {
             binding.statusText.text = "Verifikasi BERHASIL ✅"
+//            saveToGallery(imageUri!!)
+//            if (imageUri != null) {
+//                saveToGallery(imageUri!!)
+//            } else {
+//                Log.d("RESULT", "ERROR : $imageUri")
+//            }
         }
     }
 
@@ -242,39 +263,148 @@ class MainActivity : AppCompatActivity() {
         isLeftEyeClosed = false
         isRightEyeClosed = false
         challengeList.clear()
+    }
+
+    private fun capturePhoto() {
+        Log.d("RESULT", "capturePhoto passed")
+        imageCapture = ImageCapture.Builder()
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            .build()
+
+
+        val handler = Handler(Looper.getMainLooper())
+        val outputFile = createImageFile()
+        Log.d("RESULT", "outputFile : $outputFile")
+
+        currentPhotoPath = outputFile.absolutePath
+        Log.d("RESULT", "currentPhotoPath : $currentPhotoPath")
+
+        val outputOption = ImageCapture.OutputFileOptions.Builder(outputFile).build()
+        val executor = ContextCompat.getMainExecutor(this)
+
+        handler.postDelayed({
+            imageCapture.takePicture(
+                outputOption, executor, object :
+                    OnImageSavedCallback {
+                    override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                        imageUri = outputFileResults.savedUri
+                        Log.d("RESULT", "Photo saved at: $imageUri")
+                    }
+
+                    override fun onError(exception: ImageCaptureException) {
+                        Log.e("RESULT", "Error taking photo: ${exception.message}")
+                    }
+                }
+
+            )
+        }, 2000)
 
     }
 
-    private fun saveToGallery(photoPath: String?) {
-        if (photoPath == null) return
+    private fun saveToGallery(photoUri: Uri) {
 
-        val file = File(photoPath)
-        if (!file.exists()) {
-            Log.e("ERROR", "File not found in path: $photoPath")
-            return
-        }
-
-        val values = ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, file.name)
+        val contentValues = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, currentPhotoPath?.let { File(it).name })
             put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/GlobalExtreme")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.Images.Media.RELATIVE_PATH, "Picture/GlobalExtreme")
+            }
         }
-        val uri =
-            contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
 
-        uri?.let {
-            try {
-                contentResolver.openOutputStream(it)?.use { outputStream ->
-                    FileInputStream(file).use { inputStream ->
-                        inputStream.copyTo(outputStream)
-                    }
+        val uri =
+            contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+
+        uri?.also {
+            contentResolver.openOutputStream(it).use { outputStream ->
+                contentResolver.openInputStream(photoUri)?.use { inputStream ->
+                    inputStream.copyTo(outputStream!!)
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
-                Log.d("RESULT", "Failed load image to gallery $e")
             }
         }
     }
+
+    private fun openCamera() {
+        val handler = Handler(Looper.getMainLooper())
+        val imageCapture = ImageCapture.Builder()
+            .setTargetRotation(windowManager.defaultDisplay.rotation)
+            .build()
+
+        val photoFile: File? = try {
+            createImageFile()
+        } catch (e: IOException) {
+            Toast.makeText(this, "Failed load file", Toast.LENGTH_SHORT).show()
+            null
+        }
+
+        Log.d("RESULT", "photoFile: $photoFile")
+
+        photoFile?.also {
+            val photoURI: Uri = FileProvider.getUriForFile(
+                this, "${this.packageName}.provider", it
+            )
+            imageUri = photoURI
+            Log.d("RESULT", "imageUri: $imageUri")
+
+            val outputOption = ImageCapture.OutputFileOptions.Builder(photoFile).build()
+            handler.postDelayed({
+                imageCapture.takePicture(
+                    outputOption, ContextCompat.getMainExecutor(this), object :
+                        OnImageSavedCallback {
+                        override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                            imageUri = photoURI
+//                            saveToGallery(currentPhotoPath)
+                            Log.d("RESULT", "Photo saved at: $imageUri")
+                        }
+
+                        override fun onError(exception: ImageCaptureException) {
+                            Log.e("RESULT", "Error taking photo: ${exception.message}")
+                        }
+                    }
+
+                )
+            }, 1000)
+        }
+    }
+
+    private fun createImageFile(): File {
+        val timeStamp: String =
+            SimpleDateFormat("yyMMdd_HHmmss", Locale.getDefault()).format(Date())
+        val storageDir: File = this.getExternalFilesDir(Environment.DIRECTORY_PICTURES)!!
+        return File.createTempFile("JPEG_${timeStamp}_", ".jpg", storageDir)
+    }
+
+//
+//    private fun saveToGallery(photoPath: String?) {
+//        if (photoPath == null) return
+//
+//        val file = File(photoPath)
+//        if (!file.exists()) {
+//            Log.e("ERROR", "File not found in path: $photoPath")
+//            return
+//        }
+//
+//        val values = ContentValues().apply {
+//            put(MediaStore.Images.Media.DISPLAY_NAME, file.name)
+//            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+//            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/GlobalExtreme")
+//        }
+//        val uri =
+//            this.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+//
+//        uri?.let {
+//            try {
+//                this.contentResolver.openOutputStream(it)?.use { outputStream ->
+//                    FileInputStream(file).use { inputStream ->
+//                        inputStream.copyTo(outputStream)
+//                    }
+//                }
+//            } catch (e: Exception) {
+//                e.printStackTrace()
+//                Log.d("RESULT", "Failed load image to gallery $e")
+//            }
+//        }
+//    }
+
 
     private fun allPermissionsGranted() = REQUIRED_PERMISSIONS.all {
         ContextCompat.checkSelfPermission(
